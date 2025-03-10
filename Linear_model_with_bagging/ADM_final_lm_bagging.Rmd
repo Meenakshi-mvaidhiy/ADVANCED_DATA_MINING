@@ -1,0 +1,391 @@
+---
+title: "ADM1"
+author: "Meenakshi Vaidhiyanathan"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r}
+library(readr)
+library(class)
+library(ISLR)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(gmodels)
+library(modeest)
+library(ggcorrplot)
+library(car)
+library(DataExplorer)
+library(skimr)
+library(glmnet)
+```
+
+```{r}
+library(readr)
+train <- read_csv("~/Downloads/train_v3.csv")
+head(train)
+```
+
+```{r}
+dim(train)
+```
+
+```{r}
+x<-table(is.na(train))
+x
+```
+
+```{r}
+missing_training<- train[!complete.cases(train), ]
+dim(missing_training)
+```
+
+```{r}
+train<- train[complete.cases(train), ]
+dim(train)
+dim(missing_training)
+```
+ 
+```{r}
+table(is.na(train))
+```
+
+```{r}
+# Function to check if a column contains only 0 and 1
+is_binary <- function(x) {
+  all(x %in% c(0, 1))
+}
+ 
+# Find columns with only 0 and 1 values
+binary_cols <- sapply(train, is_binary)
+train_fac<- cbind(train$f33, train$f34, train$f35, train$f37, train$f38, train$f700, train$f701, train$f702, train$f736, train$f764, train$f776, train$f777)
+train_fac<- as.data.frame(train_fac)
+```
+ 
+```{r}
+colnames(train_fac)<- c("f33", "f34", "f35", "f37","f38", "f700", "f701", "f702", "f736", "f764", "f776", "f777")
+```
+ 
+```{r}
+head(train_fac)
+```
+```{r}
+train_cat<- cbind(train_fac$f776, train_fac$f777)
+```
+
+```{r}
+train<- train[ ,!names(train)=="f776"]
+dim(train)
+train<- train[ ,!names(train)=="f777"]
+dim(train)
+train<- train[ ,!names(train)=="...1"]
+dim(train)
+train<- train[ ,!names(train)=="id"]
+dim(train)
+train_num<- train[ ,!names(train)=="loss"]
+dim(train_num)
+```
+
+```{r}
+norm_model<- preProcess(train_num, method=c("center", "scale")) ##Z-score normalization
+train_norm<- predict(norm_model, train_num)
+head(train_norm)
+```
+
+```{r}
+loss<- train$loss
+training<- cbind(train_norm, train_cat, loss)
+training<- as.data.frame(training)
+dim(training)
+```
+
+
+```{r}
+training_noloss<- training[ ,!names(training)=="loss"]
+dim(training_noloss)
+```
+
+
+```{r}
+#Non-Zero variance check:
+nzv <- nearZeroVar(training_noloss)
+training_filtered <- training_noloss[, -nzv] # Exclude near-zero variance columns
+cat("Remaining features after variance filtering:", ncol(training_filtered), "\n")
+``` 
+
+#Multicolinearity check
+```{r}
+# Verify that all columns are now numeric
+training_numeric <- training_filtered[, sapply(training_filtered, is.numeric)]
+ 
+# Proceed with correlation filtering
+cor_matrix <- cor(training_numeric) # Compute correlation matrix
+head(training_numeric)
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.9) # Identify highly correlated features
+training_filtered <- training_numeric[, -highly_correlated] # Remove highly correlated features
+head(training_filtered)
+cat("Remaining features after correlation filtering:", ncol(training_filtered), "\n")
+```
+
+```{r}
+loss<- train$loss
+trained_model<- cbind(training_filtered, loss)
+trained_model<- as.data.frame(trained_model)
+training_noloss<-trained_model[ ,!names(trained_model)=="loss"]
+```
+
+
+#Importing validation dataset
+ 
+```{r}
+valid <- read.csv("~/Downloads/test_v3.csv")
+```
+
+```{r}
+table(is.na(valid))
+```
+ 
+```{r}
+valid<- valid[complete.cases(valid), ]
+dim(valid)
+```
+
+```{r}
+table(is.na(valid))
+```
+
+```{r}
+valid_cat<- cbind(valid$f776, valid$f777)
+```
+
+```{r}
+valid<- valid[ ,!names(valid)=="f776"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="f777"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="X"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="id"]
+dim(valid)
+valid_num<- valid[ ,!names(valid)=="loss"]
+dim(valid_num)
+```
+
+
+```{r}
+valid_norm<- predict(norm_model, valid_num)
+head(valid_norm)
+```
+
+```{r}
+loss<- valid$loss
+validation<- cbind(valid_norm, valid_cat, loss)
+validation<- as.data.frame(validation)
+dim(validation)
+```
+
+```{r}
+validation_noloss<- validation[ ,!names(validation)=="loss"]
+dim(validation_noloss)
+```
+
+
+```{r}
+lm_model<- lm(loss ~., data = trained_model)
+```
+
+
+##feature selection using ANOVA:
+```{r}
+anova_result<- anova(lm_model)
+anova_result
+```
+
+```{r}
+colnames(anova_result)<- c("df", "Sum Sq", "Mean Sq", "f_value", "Pr_f")
+print(anova_result)
+```
+
+```{r}
+##descending order of f_value
+sorted_anova<- arrange(anova_result, desc(f_value))
+print(sorted_anova)
+```
+
+
+```{r}
+pc <- prcomp(trained_model[,-39430],
+             center = TRUE,
+            scale. = TRUE)
+attributes(pc)
+```
+
+```{r}
+# Perform PCA
+pca_result <- prcomp(trained_model, center = TRUE, scale. = TRUE)
+```
+
+
+```{r}
+# Load the factoextra package if not already loaded
+library(factoextra)
+# Visualize variables in the principal component space (biplot)
+fviz_pca_var(pca_result, col.var = "cos2",
+             gradient.cols = c("blue", "orange", "green"),
+             repel = TRUE)
+```
+
+```{r}
+#using anova and f-score results for feature selection
+feature_selected_lm<- cbind(trained_model$f674, trained_model$f471, trained_model$f13, trained_model$f765, trained_model$f299, trained_model$f384, trained_model$f664, trained_model$f755, trained_model$f406, trained_model$f374, trained_model$f645, trained_model$f103, trained_model$f403, trained_model$f32, trained_model$f639, trained_model$f383, trained_model$f173, trained_model$f1, trained_model$f458, trained_model$f232, trained_model$f146)
+
+feature_selected_lm<- as.data.frame(feature_selected_lm)
+colnames(feature_selected_lm)<- c("f674", "f471", "f13", "f765", "f299", "f384", "f664", "f755", "f406", "f374", "f645", "f103", "f403", "f32", "f639", "f383", "f173", "f1", "f458", "f232", "f146")
+```
+
+```{r}
+#using anova and f-score results for feature selection
+feature_selected_validation<- cbind(validation$f674, validation$f471, validation$f13, validation$f765, validation$f299, validation$f384, validation$f664, validation$f755, validation$f406, validation$f374, validation$f645, validation$f103, validation$f403, validation$f32, validation$f639, validation$f383, validation$f173, validation$f1, validation$f458, validation$f232, validation$f146)
+
+feature_selected_validation<- as.data.frame(feature_selected_validation)
+colnames(feature_selected_validation)<- c("f674", "f471", "f13", "f765", "f299", "f384", "f664", "f755", "f406", "f374", "f645", "f103", "f403", "f32", "f639", "f383", "f173", "f1", "f458", "f232", "f146")
+```
+
+
+
+```{r}
+trained_model_fs<-feature_selected_lm
+trained_model_fs<- as.data.frame(trained_model_fs)
+```
+
+```{r}
+index_5<- trained_model$loss
+lm_model_1<- lm(index_5~., data =trained_model_fs)
+predicted_without_bagging<- predict(lm_model_1, feature_selected_validation)
+head(predicted_without_bagging)
+```
+
+```{r}
+mae_lm_1 <- mean(abs(predicted_without_bagging - validation$loss))
+
+# Print the MAE
+print(mae_lm_1)
+```
+```{r}
+mae_lm_1 <- mean(abs(predicted_without_bagging - trained_model$loss))
+
+# Print the MAE
+print(mae_lm_1)
+```
+
+
+```{r}
+
+# Initialize predictions storage
+predictions_bagging <- NULL
+
+# Perform bagging
+for (n in 1:10) {
+  # Bootstrap sample
+  sub_index <- sample(nrow(trained_model_fs), round(nrow(trained_model_fs) * 0.66), replace = TRUE)
+  sub_data <- trained_model_fs[sub_index, ]
+  sub_target <- index_5[sub_index]  # Align target for the subset
+  
+  # Build the model 
+  sub_model <- lm(sub_target ~ f674 + f471 + f13 + f765 + f299 + f384 + f664 + 
+                                f755 + f406 + f374 + f645 + f103 + f403 + f32 + 
+                                f639 + f383 + f173 + f1 + f458 + f232 + f146, 
+                  data = sub_data)
+  
+  # Predict on validation dataset
+  predictions <- predict(sub_model, feature_selected_validation)
+  
+  # Store predictions
+  predictions_bagging <- cbind(predictions_bagging, predictions)
+}
+
+# Output predictions
+print(head(predictions_bagging))
+```
+
+```{r}
+head(predictions_bagging[ ,1:5])
+```
+
+```{r}
+predictions_bagging_final=apply(predictions_bagging,1,mean) #average all predictions , average over rows i.e. dimension 1
+
+
+# Calculate MAE
+mae_lm_2 <- mean(abs(predictions_bagging_final - validation$loss))
+
+# Print the MAE
+print(mae_lm_2)
+```
+
+
+```{r}
+mae_lm_1 <- mean(abs(predictions_bagging_final - trained_model$loss))
+
+# Print the MAE
+print(mae_lm_1)
+```
+
+
+
+
+```{r}
+test<- read_csv("~/Downloads/test__no_lossv3 (2).csv")
+```
+
+```{r}
+test_set<- test[complete.cases(test), ]
+```
+
+```{r}
+test_set<- test_set[ ,!names(test_set)=="f776"]
+dim(test_set)
+test_set<- test_set[ ,!names(test_set)=="f777"]
+dim(test_set)
+test_set<- test_set[ ,!names(test_set)=="...1"]
+dim(test_set)
+```
+
+
+```{r}
+test_norm<- predict(norm_model, test_set)
+head(test_norm)
+```
+
+```{r}
+test_set<- as.data.frame(test_norm)
+```
+
+
+```{r}
+##feature selection on the test-set
+test_set<- cbind(test_set$id, test_set$f674, test_set$f471, test_set$f13, test_set$f765, test_set$f299, test_set$f384, test_set$f664, test_set$f755, test_set$f406, test_set$f374, test_set$f645, test_set$f103, test_set$f403, test_set$f32, test_set$f639, test_set$f383, test_set$f173, test_set$f1, test_set$f458, test_set$f232, test_set$f146)
+
+test_set<- as.data.frame(test_set)
+colnames(test_set)<- c("id", "f674", "f471", "f13", "f765", "f299", "f384", "f664", "f755", "f406", "f374", "f645", "f103", "f403", "f32", "f639", "f383", "f173", "f1", "f458", "f232", "f146")
+```
+
+```{r}
+predicted_test_set<- predict(sub_model, test_set)
+head(predicted_test_set)
+```
+
+
+```{r}
+predicted_loss_df <- data.frame(id = test_set$id, loss = predicted_test_set)
+
+# Save the predictions to a CSV file with the required format
+write.csv(predicted_test_set, "predicted_loss_output_bagging.csv", row.names = FALSE)
+head(predicted_test_set)
+
+cat("Predictions saved successfully to 'predicted_loss_output_bagging.csv'.")
+```
+
+
+
