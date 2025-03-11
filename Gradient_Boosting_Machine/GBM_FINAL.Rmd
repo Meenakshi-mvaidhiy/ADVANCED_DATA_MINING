@@ -1,0 +1,483 @@
+---
+title: "GBM"
+author: Group_4_GBM
+output: pdf_document
+date: "2024-11-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(class)
+library(ISLR)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(gmodels)
+library(modeest)
+library(ggcorrplot)
+library(DataExplorer)
+library(skimr)
+library(xgboost)
+```
+
+```{r}
+library(readr)
+train <- read_csv("train_v3.csv")
+head(train)
+```
+
+```{r}
+dim(train)
+```
+
+```{r}
+x<-table(is.na(train))
+x
+```
+
+```{r}
+missing_training<- train[!complete.cases(train), ]
+dim(missing_training)
+```
+
+```{r}
+train<- train[complete.cases(train), ]
+dim(train)
+dim(missing_training)
+```
+ 
+```{r}
+table(is.na(train))
+```
+
+```{r}
+# Function to check if a column contains only 0 and 1
+is_binary <- function(x) {
+  all(x %in% c(0, 1))
+}
+ 
+# Find columns with only 0 and 1 values
+binary_cols <- sapply(train, is_binary)
+train_fac<- cbind(train$f33, train$f34, train$f35, train$f37, train$f38, train$f700, train$f701, train$f702, train$f736, train$f764, train$f776, train$f777)
+train_fac<- as.data.frame(train_fac)
+```
+ 
+```{r}
+colnames(train_fac)<- c("f33", "f34", "f35", "f37","f38", "f700", "f701", "f702", "f736", "f764", "f776", "f777")
+```
+ 
+```{r}
+head(train_fac)
+```
+```{r}
+train_cat<- cbind(train_fac$f776, train_fac$f777)
+```
+
+```{r}
+train<- train[ ,!names(train)=="f776"]
+dim(train)
+train<- train[ ,!names(train)=="f777"]
+dim(train)
+train<- train[ ,!names(train)=="...1"]
+dim(train)
+train<- train[ ,!names(train)=="id"]
+dim(train)
+train_num<- train[ ,!names(train)=="loss"]
+dim(train_num)
+```
+
+```{r}
+norm_model<- preProcess(train_num, method=c("center", "scale")) ##Z-score normalization
+train_norm<- predict(norm_model, train_num)
+head(train_norm)
+```
+
+```{r}
+loss<- train$loss
+training<- cbind(train_norm, train_cat, loss)
+training<- as.data.frame(training)
+dim(training)
+```
+
+
+```{r}
+training_noloss<- training[ ,!names(training)=="loss"]
+dim(training_noloss)
+```
+
+
+```{r}
+#Non-Zero variance check:
+nzv <- nearZeroVar(training_noloss)
+training_filtered <- training_noloss[, -nzv] # Exclude near-zero variance columns
+cat("Remaining features after variance filtering:", ncol(training_filtered), "\n")
+``` 
+
+#Multicolinearity check
+```{r}
+# Verify that all columns are now numeric
+training_numeric <- training_filtered[, sapply(training_filtered, is.numeric)]
+ 
+# Proceed with correlation filtering
+cor_matrix <- cor(training_numeric) # Compute correlation matrix
+head(training_numeric)
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.9) # Identify highly correlated features
+training_filtered <- training_numeric[, -highly_correlated] # Remove highly correlated features
+head(training_filtered)
+cat("Remaining features after correlation filtering:", ncol(training_filtered), "\n")
+```
+
+```{r}
+loss<- train$loss
+trained_model<- cbind(training_filtered, loss)
+trained_model<- as.data.frame(trained_model)
+training_noloss<-trained_model[ ,!names(trained_model)=="loss"]
+```
+
+
+#Importing validation dataset
+ 
+```{r}
+valid <- read.csv("test_v3.csv")
+```
+
+```{r}
+table(is.na(valid))
+```
+ 
+```{r}
+valid<- valid[complete.cases(valid), ]
+dim(valid)
+```
+
+```{r}
+table(is.na(valid))
+```
+
+```{r}
+valid_cat<- cbind(valid$f776, valid$f777)
+```
+
+```{r}
+valid<- valid[ ,!names(valid)=="f776"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="f777"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="X"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="id"]
+dim(valid)
+valid_num<- valid[ ,!names(valid)=="loss"]
+dim(valid_num)
+```
+
+
+```{r}
+valid_norm<- predict(norm_model, valid_num)
+head(valid_norm)
+```
+
+```{r}
+loss<- valid$loss
+validation<- cbind(valid_norm, valid_cat, loss)
+validation<- as.data.frame(validation)
+dim(validation)
+```
+
+```{r}
+validation_noloss<- validation[ ,!names(validation)=="loss"]
+dim(validation_noloss)
+```
+
+
+```{r}
+# Load required libraries
+library(caret)
+library(gbm)
+
+# Define target variable and predictors
+target_var <- trained_model$loss # Name of the target variable column
+predictors <- training_noloss  # All columns except target
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Fit GBM model
+gbm_model <- gbm(
+  formula = loss~ ., 
+  data = trained_model,
+  distribution = "gaussian",  # Regression problem
+  n.trees = 100,    # Number of trees from previous tuning
+  interaction.depth = 4,      # Depth of trees
+  shrinkage = 0.01,           # Learning rate
+  n.minobsinnode = 10,        # Minimum observations per node
+  bag.fraction = 0.7,         # Fraction of data for each tree
+  cv.folds = 5
+  )
+
+# Extract feature importance with relative influence
+feature_importance <- summary(gbm_model, plotit = FALSE)
+
+# Select top 30 features (includes relative influence)
+top_features <- head(feature_importance, 30)
+
+# Create reduced dataset with significant features
+selected_features <- top_features$var
+reduced_data <- trained_model[, c(selected_features, "loss")]
+
+# Fit new GBM model with reduced feature set
+model_reduced <- gbm(
+  formula = loss~ .,
+  data = reduced_data,
+  distribution = "gaussian",
+  n.trees = 100,
+  interaction.depth = 4,
+  shrinkage = 0.01,
+  n.minobsinnode = 10,
+  bag.fraction = 0.7
+)
+
+# Print significant features and their importance
+cat("Significant Features")
+print(top_features)
+```
+
+
+```{r}
+library(ggplot2)
+
+# Convert feature importance to a data frame for ggplot
+importance_df <- as.data.frame(top_features)
+
+# Plot feature importance for top features
+ggplot(importance_df, aes(x = reorder(var, rel.inf), y = rel.inf)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +
+  labs(
+    title = "Top 30 Feature Importance",
+    x = "Features",
+    y = "Relative Influence (%)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8))
+```
+
+```{r}
+library(gbm)
+library(dplyr)
+
+# Subset train and validation datasets
+train_selected_gbm <- trained_model[, c(selected_features, "loss")]
+valid_selected_gbm <- validation[, c(selected_features, "loss"), drop = FALSE]
+
+# Define hyperparameter ranges, including bag.fraction
+params_grid <- list(
+  n.trees = c(100, 250, 500),
+  interaction.depth = c(3, 5, 7),
+  shrinkage = c(0.01, 0.05, 0.1),
+  n.minobsinnode = c(5, 10, 15),
+  bag.fraction = c(0.5, 0.6, 0.7, 0.8)  # Added bag.fraction to the grid
+)
+
+# Function to randomly sample hyperparameters, including bag.fraction
+sample_params <- function() {
+  list(
+    n.trees = sample(params_grid$n.trees, 1),
+    interaction.depth = sample(params_grid$interaction.depth, 1),
+    shrinkage = runif(1, min(params_grid$shrinkage), max(params_grid$shrinkage)),
+    n.minobsinnode = sample(params_grid$n.minobsinnode, 1),
+    bag.fraction = sample(params_grid$bag.fraction, 1)  # Sample bag.fraction
+  )
+}
+
+# Set up early stopping function, including bag.fraction in model fitting
+early_stopping_gbm <- function(params, train_data, max_iterations = 50, patience = 10) {
+  best_mae <- Inf
+  best_params <- NULL
+  no_improvement_count <- 0
+  
+  results <- list()
+  
+  for (i in 1:max_iterations) {
+    # Perform cross-validation
+    cv_model <- tryCatch({
+      gbm(
+        loss ~ .,
+        data = train_data,
+        distribution = "gaussian",
+        n.trees = params$n.trees,
+        interaction.depth = params$interaction.depth,
+        shrinkage = params$shrinkage,
+        n.minobsinnode = params$n.minobsinnode,
+        bag.fraction = params$bag.fraction,  # Pass bag.fraction to gbm
+        cv.folds = 5,  # 5-fold cross-validation
+        verbose = FALSE
+      )
+    }, error = function(e) {
+      message("Error in gbm fitting: ", e)
+      return(NULL)
+    })
+    
+    if (!is.null(cv_model)) {
+      current_mae <- min(cv_model$cv.error)
+      
+      # Store results
+      results[[i]] <- list(
+        mae = current_mae,
+        params = params,
+        iteration = i
+      )
+      
+      # Check for improvement
+      if (current_mae < best_mae) {
+        best_mae <- current_mae
+        best_params <- params
+        no_improvement_count <- 0
+      } else {
+        no_improvement_count <- no_improvement_count + 1
+      }
+      
+      # Early stopping condition
+      if (no_improvement_count >= patience) {
+        message(paste("Early stopping triggered after", i, "iterations"))
+        break
+      }
+    }
+    
+    # Sample new parameters for next iteration
+    params <- sample_params()
+  }
+  
+  list(
+    best_mae = best_mae,
+    best_params = best_params,
+    results = results
+  )
+}
+
+# Perform early stopping hyperparameter tuning
+tuning_results <- early_stopping_gbm(
+  sample_params(), 
+  train_data = train_selected_gbm,
+  max_iterations = 50,
+  patience = 10
+)
+
+# Output the best results
+cat("Best MAE: ", tuning_results$best_mae, "\n")
+cat("Best Parameters: \n")
+print(tuning_results$best_params)
+```
+
+```{r}
+# Train Final model with best parameters
+final_gbm <- gbm(
+  loss ~ .,
+  data = train_selected_gbm, 
+  distribution = "gaussian",
+  n.trees = tuning_results$best_params$n.trees,
+  interaction.depth = tuning_results$best_params$interaction.depth,
+  shrinkage = tuning_results$best_params$shrinkage,
+  n.minobsinnode = tuning_results$best_params$n.minobsinnode,
+  bag.fraction = tuning_results$best_params$bag.fraction,
+  verbose = FALSE
+)
+```
+
+```{r}
+# Make predictions on validation set
+gbm_predictions_valid <- predict(final_gbm, newdata = valid_selected_gbm, 
+  n.trees = tuning_results$best_params$n.trees
+)
+
+# Calculate Mean Absolute Error (MAE) on validation set
+mae_gbm_valid <- mean(abs(gbm_predictions_valid - valid_selected_gbm$loss))
+cat("Validation MAE:", mae_gbm_valid, "\n")
+
+```
+
+```{r}
+# Make predictions on training set
+gbm_predictions_train <- predict(final_gbm, newdata = train_selected_gbm, 
+  n.trees = tuning_results$best_params$n.trees
+)
+
+# Calculate Mean Absolute Error (MAE) on training set
+mae_gbm_train <- mean(abs(gbm_predictions_train - train_selected_gbm$loss))
+cat("Training MAE:", mae_gbm_train, "\n")
+```
+
+#TEST SET PREDICTION
+```{r}
+test_no_loss <- read_csv("test__no_lossv3.csv")
+head(test_no_loss)
+```
+
+```{r}
+table(is.na(test_no_loss))
+```
+
+```{r}
+test_no_loss<- test_no_loss[complete.cases(test_no_loss), ] 
+table(is.na(test_no_loss))
+```
+
+```{r}
+dim(test_no_loss)
+```
+
+```{r}
+test_cat<- cbind(test_no_loss$f776, test_no_loss$f777)
+```
+
+```{r}
+cols_to_remove <- c("f776", "f777", "...1")
+test_num <- test_no_loss[, !(names(test_no_loss) %in% cols_to_remove)]
+dim(test_num)
+```
+
+```{r}
+test_norm<- predict(norm_model, test_num)
+head(test_norm)
+```
+
+```{r}
+# create a matrix for prediction
+feature_selected_gbm_test <- cbind(test_no_loss$f586, test_no_loss$f212, test_no_loss$f288, test_no_loss$f401, test_no_loss$f29, test_no_loss$f441, test_no_loss$f32, test_no_loss$f525, test_no_loss$f413, test_no_loss$f601, test_no_loss$f1, test_no_loss$f272, test_no_loss$f173, test_no_loss$f744, test_no_loss$f651, test_no_loss$f81,  test_no_loss$f674, test_no_loss$f556, test_no_loss$f3,   test_no_loss$f630, test_no_loss$f733, test_no_loss$f6,   test_no_loss$f471, test_no_loss$f650,test_no_loss$f734, test_no_loss$f277, test_no_loss$f204, test_no_loss$f13,  test_no_loss$f631, test_no_loss$f636, test_no_loss$f425, test_no_loss$f598)
+
+colnames(feature_selected_gbm_test)<- c("f586", "f212", "f288", "f401", "f29","f441", "f32", "f525", "f413", "f601", "f1", "f272", "f173", "f744", "f651", "f81",  "f674", "f556", "f3",   "f630", "f733", "f6",   "f471", "f650",
+ "f734", "f277", "f204", "f13",  "f631", "f636", "f425", "f598")
+head(feature_selected_gbm_test)
+```
+
+```{r}
+# Ensure test data has these exact features
+test_subset <- test_no_loss[, colnames(feature_selected_gbm_test)]
+
+# Predict using the subset
+predicted_test_gbm <- predict(
+  object = final_gbm,  
+  newdata = test_subset,
+  n.trees = tuning_results$best_params$n.trees
+)
+
+# View the first few predictions
+head(predicted_test_gbm)
+```
+
+```{r}
+# Combine the retained 'id' column with the predicted loss values
+predicted_loss_df <- data.frame(id = test_no_loss$id, loss = predicted_test_gbm)
+
+# Save the predictions to a CSV file with the required format
+write.csv(predicted_loss_df, "predicted_loss_output.csv", row.names = FALSE)
+predicted_loss_df
+
+cat("Predictions saved successfully to 'predicted_loss_output.csv'.")
+```
+
