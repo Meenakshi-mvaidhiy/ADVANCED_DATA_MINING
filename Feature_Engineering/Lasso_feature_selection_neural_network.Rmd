@@ -1,0 +1,508 @@
+---
+title: "Neural Network using lasso selected features"
+author: "Group_4"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+
+```{r}
+library(readr)
+library(class)
+library(ISLR)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(gmodels)
+library(modeest)
+library(ggcorrplot)
+library(car)
+library(DataExplorer)
+library(skimr)
+library(glmnet)
+```
+
+```{r}
+library(readr)
+train <- read_csv("C:\\Users\\Sania fatima\\Desktop\\Meenakshi\\train_v3.csv")
+head(train)
+```
+
+```{r}
+dim(train)
+```
+
+```{r}
+x<-table(is.na(train))
+x
+```
+
+```{r}
+missing_training<- train[!complete.cases(train), ]
+dim(missing_training)
+```
+
+```{r}
+train<- train[complete.cases(train), ]
+dim(train)
+dim(missing_training)
+```
+ 
+```{r}
+table(is.na(train))
+```
+
+```{r}
+# Function to check if a column contains only 0 and 1
+is_binary <- function(x) {
+  all(x %in% c(0, 1))
+}
+ 
+# Find columns with only 0 and 1 values
+binary_cols <- sapply(train, is_binary)
+train_fac<- cbind(train$f33, train$f34, train$f35, train$f37, train$f38, train$f700, train$f701, train$f702, train$f736, train$f764, train$f776, train$f777)
+train_fac<- as.data.frame(train_fac)
+```
+ 
+```{r}
+colnames(train_fac)<- c("f33", "f34", "f35", "f37","f38", "f700", "f701", "f702", "f736", "f764", "f776", "f777")
+```
+ 
+```{r}
+head(train_fac)
+```
+```{r}
+train_cat<- cbind(train_fac$f776, train_fac$f777)
+```
+
+```{r}
+train<- train[ ,!names(train)=="f776"]
+dim(train)
+train<- train[ ,!names(train)=="f777"]
+dim(train)
+train<- train[ ,!names(train)=="...1"]
+dim(train)
+train<- train[ ,!names(train)=="id"]
+dim(train)
+train_num<- train[ ,!names(train)=="loss"]
+dim(train_num)
+```
+
+```{r}
+norm_model<- preProcess(train_num, method=c("center", "scale")) ##Z-score normalization
+train_norm<- predict(norm_model, train_num)
+head(train_norm)
+```
+
+```{r}
+loss<- train$loss
+training<- cbind(train_norm, train_cat, loss)
+training<- as.data.frame(training)
+dim(training)
+```
+
+
+```{r}
+training_noloss<- training[ ,!names(training)=="loss"]
+dim(training_noloss)
+```
+
+
+```{r}
+#Non-Zero variance check:
+nzv <- nearZeroVar(training_noloss)
+training_filtered <- training_noloss[, -nzv] # Exclude near-zero variance columns
+cat("Remaining features after variance filtering:", ncol(training_filtered), "\n")
+``` 
+
+#Multicolinearity check
+```{r}
+# Verify that all columns are now numeric
+training_numeric <- training_filtered[, sapply(training_filtered, is.numeric)]
+ 
+# Proceed with correlation filtering
+cor_matrix <- cor(training_numeric) # Compute correlation matrix
+head(training_numeric)
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.9) # Identify highly correlated features
+training_filtered <- training_numeric[, -highly_correlated] # Remove highly correlated features
+head(training_filtered)
+cat("Remaining features after correlation filtering:", ncol(training_filtered), "\n")
+```
+
+```{r}
+loss<- train$loss
+trained_model<- cbind(training_filtered, loss)
+trained_model<- as.data.frame(trained_model)
+training_noloss<-trained_model[ ,!names(trained_model)=="loss"]
+```
+
+
+#Importing validation dataset
+ 
+```{r}
+valid <- read.csv("C:\\Users\\Sania fatima\\Desktop\\Meenakshi\\test_v3.csv")
+```
+
+```{r}
+table(is.na(valid))
+```
+ 
+```{r}
+valid<- valid[complete.cases(valid), ]
+dim(valid)
+```
+
+```{r}
+table(is.na(valid))
+```
+
+```{r}
+valid_cat<- cbind(valid$f776, valid$f777)
+```
+
+```{r}
+valid<- valid[ ,!names(valid)=="f776"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="f777"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="X"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="id"]
+dim(valid)
+valid_num<- valid[ ,!names(valid)=="loss"]
+dim(valid_num)
+```
+
+
+```{r}
+valid_norm<- predict(norm_model, valid_num)
+head(valid_norm)
+```
+
+```{r}
+loss<- valid$loss
+validation<- cbind(valid_norm, valid_cat, loss)
+validation<- as.data.frame(validation)
+dim(validation)
+```
+
+```{r}
+validation_noloss<- validation[ ,!names(validation)=="loss"]
+dim(validation_noloss)
+```
+
+
+```{r}
+# Performing Lasso for feature selection on features selected using filtering methods above:
+# Converting to matrix as glmnet requires inputs in matrix form
+set.seed(123)
+input_lasso <- as.matrix(training_noloss) # Predictor variables
+index <- trained_model$loss # Target variable
+```
+ 
+```{r}
+# Lasso:
+# Fit a Lasso regression model
+feature_lasso <- glmnet(input_lasso, index, alpha = 1, family = "gaussian") # alpha is set to 1 since we are performing lasso for feature selection; gamily is set to gaussian since the target variable is numeric and continuous.
+feature_lasso$lambda
+```
+ 
+```{r}
+# CV to find optimal lambda:
+set.seed(123)
+cv_feature_lasso <- cv.glmnet(input_lasso, index, alpha = 1, family = "gaussian")
+optimal_lambda_svm_featuresellaso <- cv_feature_lasso$lambda.min # Optimal lambda value
+cat("Optimal Lambda (Regularization Parameter):", optimal_lambda_svm_featuresellaso, "\n")
+```
+ 
+```{r}
+# Feature selection based on optimal lambda value:
+coefficients_feature_lasso <- coef(cv_feature_lasso, s = "lambda.min")
+coefficients_feature_lasso
+# Convert sparse matrix to a regular matrix
+coefficients_matrix <- as.matrix(coefficients_feature_lasso)
+head(coefficients_matrix)
+# Extract names of non-zero coefficients (excluding the intercept)
+selected_features_svm <- rownames(coefficients_matrix)[coefficients_matrix[, 1] != 0]
+selected_features_svm
+selected_features_svm <- selected_features_svm[selected_features_svm != "(Intercept)"] # Remove intercept
+```
+ 
+```{r}
+# Print selected features
+cat("Selected Features using lasso:", length(selected_features_svm), "\n")
+print(selected_features_svm)
+```
+
+```{r}
+# lasso:
+# Filter training dataset to include only Lasso-selected features and the target variable
+glm_training <- training[, c(selected_features_svm, "loss")]
+head(glm_training)
+glm_training_noloss<- glm_training[ ,!names(glm_training)=="loss"]
+head(glm_training_noloss)
+```
+
+```{r}
+# lasso validation:
+# Filter validation dataset to include only Lasso-selected features and the target variable
+glm_validation <- validation[, c(selected_features_svm, "loss")]
+head(glm_validation)
+```
+
+```{r}
+index<- trained_model$loss
+```
+
+```{r}
+feature_selected_lasso<- as.matrix(glm_training)
+feature_selected_lasso_valid<- as.matrix(glm_validation)
+glm_training_noloss<- as.matrix(glm_training_noloss)
+```
+
+
+
+####dont take after this
+
+
+
+```{r}
+feature_glm <- glmnet(glm_training_noloss, glm_training$loss)
+plot(feature_glm)
+```
+
+
+```{r}
+glm_validation_noloss<- glm_validation[ ,!names(glm_validation)=="loss"]
+glm_validation_noloss<- as.matrix(glm_validation_noloss)
+predicted_glm<- predict(feature_glm, newx = glm_validation_noloss, s =0.02888142 )
+head(predicted_glm)
+```
+
+```{r}
+
+```
+
+
+```{r}
+mae_glm <- mean(abs(predicted_glm - validation$loss))
+mae_glm
+```
+
+```{r}
+glm_training_noloss<- as.data.frame(glm_training_noloss)
+module_pls<- train(loss~., data= glm_training, method= "pls", trControl=trainControl("cv", number= 5), tuneLength=10)
+module_pls
+```
+
+
+```{r}
+variable_importance<- varImp(module_pls)
+variable_importance
+```
+
+```{r}
+glm_training_wf431<- glm_training[ ,!names(glm_training)=="f431"]
+glm_training_wf431_noloss<- glm_training_wf431[ ,!names(glm_training_wf431)=="loss"]
+input_lasso_pls<- glm_training_wf431
+input_lasso_pls_noloss<- glm_training_wf431_noloss
+```
+
+```{r}
+index_1<- input_lasso_pls$loss
+```
+
+```{r}
+input_lasso_pls_noloss<- as.matrix(input_lasso_pls_noloss)
+```
+
+```{r}
+# CV to find optimal lambda for a dataset that contains features after lasso and PLS
+set.seed(123)
+cv_feature_glm_pls <- cv.glmnet(input_lasso_pls_noloss, index_1, alpha = 1, family = "gaussian")
+optimal_lambda_glm_pls <- cv_feature_glm_pls$lambda.min # Optimal lambda value
+cat("Optimal Lambda (Regularization Parameter):", optimal_lambda_glm_pls, "\n")
+```
+```{r}
+model_pls<- glmnet(input_lasso_pls_noloss, index_1)
+plot(model_pls)
+```
+ 
+
+```{r}
+glm_training_wf431_noloss<- as.matrix(glm_training_wf431_noloss)
+predicted_glm_wf431<- predict(model_pls, newx = glm_training_wf431_noloss, s=0.0003320662 )
+head(predicted_glm_wf431)
+```
+
+```{r}
+mae_glm_pls <- mean(abs(predicted_glm_wf431 - validation$loss))
+mae_glm_pls
+```
+
+
+```{r}
+# Load required libraries
+library(keras)
+library(tensorflow)
+
+# Verify the selected features
+print(selected_features_svm)
+```
+
+```{r}
+
+
+
+
+# Subset the training and validation data with selected features
+X_train_selected <- train_norm[, selected_features_svm]
+X_valid_selected <- valid_norm[, selected_features_svm]
+
+# Convert to matrix
+X_train <- as.matrix(X_train_selected)
+X_valid <- as.matrix(X_valid_selected)
+y_train <- as.numeric(train$loss)
+y_valid <- as.numeric(valid$loss)
+
+# Verify dimensions
+cat("Selected features:", selected_features_svm, "\n")
+cat("Number of selected features:", length(selected_features_svm), "\n")
+cat("Training data dimensions:", dim(X_train), "\n")
+cat("Validation data dimensions:", dim(X_valid), "\n")
+
+# Neural Network Model Function with Selected Features
+build_neural_network <- function(input_shape) {
+  model <- keras_model_sequential() %>%
+    # Input layer matching selected features
+    layer_dense(units = 64, 
+                activation = 'relu', 
+                input_shape = input_shape,
+                kernel_regularizer = regularizer_l2(0.001)) %>%
+    layer_batch_normalization() %>%
+    layer_dropout(rate = 0.2) %>%
+    
+    # Hidden layers
+    layer_dense(units = 32, 
+                activation = 'relu',
+                kernel_regularizer = regularizer_l2(0.001)) %>%
+    layer_batch_normalization() %>%
+    layer_dropout(rate = 0.2) %>%
+    
+    # Output layer
+    layer_dense(units = 1, activation = 'linear')
+  
+  # Compile the model
+  model %>% compile(
+    optimizer = optimizer_adam(learning_rate = 0.001),
+    loss = 'mean_squared_error',
+    metrics = c('mae')
+  )
+  
+  return(model)
+}
+
+# Determine input shape based on selected features
+input_shape <- dim(X_train)[2]
+
+# Build the model
+model <- build_neural_network(input_shape)
+
+# Model summary to verify architecture
+summary(model)
+
+# Callbacks
+early_stopping <- callback_early_stopping(
+  monitor = 'val_mae', 
+  patience = 10,
+  restore_best_weights = TRUE
+)
+
+model_checkpoint <- callback_model_checkpoint(
+  filepath = "best_model_lasso_features.h5",
+  monitor = 'val_mae',
+  save_best_only = TRUE
+)
+
+# Train the model
+history <- model %>% fit(
+  X_train, y_train,
+  epochs = 100,
+  batch_size = 32,
+  validation_data = list(X_valid, y_valid),
+  callbacks = list(early_stopping, model_checkpoint),
+  verbose = 1
+)
+
+# Predict on validation data
+predictions <- model %>% predict(X_valid)
+
+# Calculate performance metrics
+mae <- mean(abs(predictions - y_valid))
+
+
+# Print metrics
+cat("Mean Absolute Error (MAE):", mae, "\n")
+
+
+# Optional: Visualize training history
+plot(history)
+
+# Optional: Feature importance visualization
+if (length(selected_features_svm) > 0) {
+  # Simple feature importance based on input layer weights
+  weights <- get_weights(model)[[1]]
+  feature_importance <- abs(weights[,1])
+  importance_df <- data.frame(
+    Feature = selected_features_svm,
+    Importance = feature_importance
+  )
+  importance_df <- importance_df[order(-importance_df$Importance),]
+  print(importance_df)
+}
+```
+
+
+```{r}
+# Load the test dataset
+test <- read.csv("C:\\Users\\Sania fatima\\Downloads\\test__no_lossv3 (2).csv")
+
+# Check for missing values
+cat("Initial missing values in test set:", sum(is.na(test)), "\n")
+
+# Remove rows with missing values
+test <- test[complete.cases(test), ]
+cat("Remaining rows after removing missing values:", nrow(test), "\n")
+
+# Remove irrelevant columns
+columns_to_remove <- c("f776", "f777", "...1")
+test <- test[ , !(names(test) %in% columns_to_remove)]
+
+# Normalize the test dataset using the trained normalization model
+test_num <- test[ , !names(test) %in% c("id")]  # Exclude 'id' if present
+test_norm <- predict(norm_model, test_num)
+
+# Perform feature selection using the same criteria as training data
+test_filtered <- test_norm[, colnames(X_train)]  # Keep only the filtered features
+
+# Ensure the test set has the same column order as the training set
+test_final <- test_filtered[, colnames(X_train), drop = FALSE]
+
+# Predict the loss values using the trained model
+test_predictions <- model %>% predict(as.matrix(test_final))
+
+# Combine predictions with the test IDs (if available)
+if ("id" %in% names(test)) {
+  test_results <- data.frame(id = test$id, loss = test_predictions)
+} else {
+  test_results <- data.frame(loss = test_predictions)
+}
+
+# Save the predictions to a CSV file
+write.csv(test_results, "C:\\Users\\Sania fatima\\Desktop\\test_predictions for lasso.csv", row.names = FALSE)
+
+cat("Predictions saved to test_predictions.csv\n")
+```
+
