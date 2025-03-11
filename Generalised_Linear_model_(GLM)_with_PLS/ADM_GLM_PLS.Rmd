@@ -1,0 +1,413 @@
+---
+title: "ADM_final_lasso_pls_1"
+author: "Group_4 lasso and pls"
+date: "2024-12-02"
+output: html_document
+---
+
+```{r}
+library(readr)
+library(class)
+library(ISLR)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(gmodels)
+library(modeest)
+library(ggcorrplot)
+library(car)
+library(DataExplorer)
+library(skimr)
+library(glmnet)
+```
+
+```{r}
+library(readr)
+train <- read_csv("~/Downloads/train_v3.csv")
+head(train)
+```
+
+```{r}
+dim(train)
+```
+
+```{r}
+x<-table(is.na(train))
+x
+```
+
+```{r}
+missing_training<- train[!complete.cases(train), ]
+dim(missing_training)
+```
+
+```{r}
+train<- train[complete.cases(train), ]
+dim(train)
+dim(missing_training)
+```
+ 
+```{r}
+table(is.na(train))
+```
+
+```{r}
+# Function to check if a column contains only 0 and 1
+is_binary <- function(x) {
+  all(x %in% c(0, 1))
+}
+ 
+# Find columns with only 0 and 1 values
+binary_cols <- sapply(train, is_binary)
+train_fac<- cbind(train$f33, train$f34, train$f35, train$f37, train$f38, train$f700, train$f701, train$f702, train$f736, train$f764, train$f776, train$f777)
+train_fac<- as.data.frame(train_fac)
+```
+ 
+```{r}
+colnames(train_fac)<- c("f33", "f34", "f35", "f37","f38", "f700", "f701", "f702", "f736", "f764", "f776", "f777")
+```
+ 
+```{r}
+head(train_fac)
+```
+
+```{r}
+train_cat<- cbind(train_fac$f776, train_fac$f777)
+```
+
+```{r}
+train<- train[ ,!names(train)=="f776"]
+dim(train)
+train<- train[ ,!names(train)=="f777"]
+dim(train)
+train<- train[ ,!names(train)=="...1"]
+dim(train)
+train<- train[ ,!names(train)=="id"]
+dim(train)
+train_num<- train[ ,!names(train)=="loss"]
+dim(train_num)
+```
+
+```{r}
+norm_model<- preProcess(train_num, method=c("center", "scale")) ##Z-score normalization
+train_norm<- predict(norm_model, train_num)
+head(train_norm)
+```
+
+```{r}
+loss<- train$loss
+training<- cbind(train_norm, train_cat, loss)
+training<- as.data.frame(training)
+dim(training)
+```
+
+```{r}
+training_noloss<- training[ ,!names(training)=="loss"]
+dim(training_noloss)
+```
+
+```{r}
+#Non-Zero variance check:
+nzv <- nearZeroVar(training_noloss)
+training_filtered <- training_noloss[, -nzv] # Exclude near-zero variance columns
+cat("Remaining features after variance filtering:", ncol(training_filtered), "\n")
+```
+
+#Multicolinearity check
+```{r}
+# Verify that all columns are now numeric
+training_numeric <- training_filtered[, sapply(training_filtered, is.numeric)]
+ 
+# Proceed with correlation filtering
+cor_matrix <- cor(training_numeric) # Compute correlation matrix
+head(training_numeric)
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.9) # Identify highly correlated features
+training_filtered <- training_numeric[, -highly_correlated] # Remove highly correlated features
+head(training_filtered)
+cat("Remaining features after correlation filtering:", ncol(training_filtered), "\n")
+```
+
+```{r}
+loss<- train$loss
+trained_model<- cbind(training_filtered, loss)
+trained_model<- as.data.frame(trained_model)
+training_noloss<-trained_model[ ,!names(trained_model)=="loss"]
+```
+
+
+#Importing validation dataset
+ 
+```{r}
+valid <- read.csv("~/Downloads/test_v3.csv")
+```
+
+```{r}
+table(is.na(valid))
+```
+ 
+```{r}
+valid<- valid[complete.cases(valid), ]
+dim(valid)
+```
+
+```{r}
+table(is.na(valid))
+```
+
+```{r}
+valid_cat<- cbind(valid$f776, valid$f777)
+```
+
+```{r}
+valid<- valid[ ,!names(valid)=="f776"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="f777"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="X"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="id"]
+dim(valid)
+valid_num<- valid[ ,!names(valid)=="loss"]
+dim(valid_num)
+```
+
+```{r}
+valid_norm<- predict(norm_model, valid_num)
+head(valid_norm)
+```
+
+```{r}
+loss<- valid$loss
+validation<- cbind(valid_norm, valid_cat, loss)
+validation<- as.data.frame(validation)
+dim(validation)
+```
+
+```{r}
+validation_noloss<- validation[ ,!names(validation)=="loss"]
+dim(validation_noloss)
+```
+
+```{r}
+# Performing Lasso for feature selection on features selected using filtering methods above:
+# Converting to matrix as glmnet requires inputs in matrix form
+set.seed(123)
+input_lasso <- as.matrix(training_noloss) # Predictor variables
+index <- trained_model$loss # Target variable
+```
+ 
+```{r}
+# Lasso:
+# Fit a Lasso regression model
+set.seed(123)
+feature_lasso <- glmnet(input_lasso, index, alpha = 1, family = "gaussian") # alpha is set to 1 since we are performing lasso for feature selection; gamily is set to gaussian since the target variable is numeric and continuous.
+feature_lasso$lambda
+```
+
+```{r}
+# CV to find optimal lambda:
+set.seed(123)
+cv_feature_lasso <- cv.glmnet(input_lasso, index, alpha = 1, family = "gaussian")
+optimal_lambda_svm_featuresellaso <- cv_feature_lasso$lambda.min # Optimal lambda value
+cat("Optimal Lambda (Regularization Parameter):", optimal_lambda_svm_featuresellaso, "\n")
+```
+ 
+```{r}
+# Feature selection based on optimal lambda value:
+coefficients_feature_lasso <- coef(cv_feature_lasso, s = "lambda.min")
+coefficients_feature_lasso
+# Convert sparse matrix to a regular matrix
+coefficients_matrix <- as.matrix(coefficients_feature_lasso)
+head(coefficients_matrix)
+# Extract names of non-zero coefficients (excluding the intercept)
+selected_features_svm <- rownames(coefficients_matrix)[coefficients_matrix[, 1] != 0]
+selected_features_svm
+selected_features_svm <- selected_features_svm[selected_features_svm != "(Intercept)"] # Remove intercept
+```
+```{r}
+# Print selected features
+cat("Selected Features using lasso:", length(selected_features_svm), "\n")
+print(selected_features_svm)
+```
+
+
+```{r}
+# lasso:
+# Filter training dataset to include only Lasso-selected features 
+glm_training <- cbind(trained_model$f13, trained_model$f70, trained_model$f130, trained_model$f132, trained_model$f146, trained_model$f198, trained_model$f250, trained_model$f299, trained_model$f315, trained_model$f323, trained_model$f374, trained_model$f384, trained_model$f406, trained_model$f428, trained_model$f431, trained_model$f471, trained_model$f647, trained_model$f674, trained_model$f734, trained_model$f755, trained_model$f765)
+
+glm_training<- as.data.frame(glm_training)
+colnames(glm_training)<- c("f13", "f70", "f130", "f132", "f146", "f198", "f250", "f299", "f315", "f323", "f374", "f384", "f406", "f428", "f431", "f471", "f647", "f674", "f734", "f755", "f765")
+```
+
+```{r}
+index_glm<- trained_model$loss
+```
+
+```{r}
+set.seed(123)
+feature_glm<- glmnet(glm_training, index_glm) 
+```
+
+```{r}
+# lasso:
+# Filter validation dataset to include only Lasso-selected features 
+glm_validation <- cbind(validation$f13, validation$f70, validation$f130, validation$f132, validation$f146, validation$f198, validation$f250, validation$f299, validation$f315, validation$f323, validation$f374, validation$f384, validation$f406, validation$f428, validation$f431, validation$f471, validation$f647, validation$f674, validation$f734, validation$f755, validation$f765)
+
+glm_validation<- as.data.frame(glm_validation)
+colnames(glm_validation)<- c("f13", "f70", "f130", "f132", "f146", "f198", "f250", "f299", "f315", "f323", "f374", "f384", "f406", "f428", "f431", "f471", "f647", "f674", "f734", "f755", "f765")
+```
+
+
+```{r}
+glm_validation<- as.matrix(glm_validation)
+predicted_glm<- predict(feature_glm, newx= glm_validation, s= 0.02888142)
+head(predicted_glm)
+```
+```{r}
+mae_glm <- mean(abs(predicted_glm - validation$loss))
+mae_glm
+```
+
+##Feature selection by using PLS on lasso selected features
+
+```{r}
+pls_training<- as.data.frame(glm_training)
+dim(pls_training)
+```
+
+
+```{r}
+set.seed(123)
+training<- as.data.frame(trained_model)
+feature_selected_lasso<- as.data.frame(glm_training)
+feature_selected_lasso$loss<- train$loss
+module_pls<- train(loss~., data= feature_selected_lasso, method= "pls", trControl=trainControl("cv", number= 5), tuneLength=10)
+module_pls
+```
+
+
+##From below it can be seen that, all the features of lasso were selected by performing PLS except for the feature "f130".
+```{r}
+variable_importance<- varImp(module_pls)
+variable_importance
+```
+
+##Hence, "f130" feature is removed from `glm_training` data frame that contains the lasso(glm) selected features. This further reduces the number of features from 21 by lasso to 20 after performing PLS on data frame containing lasso selected features. 
+```{r}
+glm_training_wf130<- glm_training[ ,!names(glm_training)=="f130"]
+glm_training_wf130_noloss<- glm_training_wf130[ ,!names(glm_training_wf130)=="loss"]
+input_lasso_pls<- glm_training_wf130
+input_lasso_pls_noloss<- glm_training_wf130_noloss
+```
+
+```{r}
+index_1<- train$loss
+```
+
+```{r}
+input_lasso_pls_noloss<- as.matrix(input_lasso_pls_noloss)
+```
+
+```{r}
+# CV to find optimal lambda for a dataset that contains features after lasso and PLS
+set.seed(123)
+cv_feature_glm_pls <- cv.glmnet(input_lasso_pls_noloss, index_1, alpha = 1, family = "gaussian")
+optimal_lambda_glm_pls <- cv_feature_glm_pls$lambda.min # Optimal lambda value
+cat("Optimal Lambda (Regularization Parameter):", optimal_lambda_glm_pls, "\n")
+```
+
+```{r}
+model_pls<- glmnet(input_lasso_pls_noloss, index_1)
+plot(model_pls)
+```
+```{r}
+glm_training_wf130_noloss<- as.matrix(glm_training_wf130_noloss)
+predicted_glm_wf130<- predict(model_pls, newx = glm_training_wf130_noloss, s=0.0003320662 )
+head(predicted_glm_wf130)
+```
+
+```{r}
+mae_glm_pls <- mean(abs(predicted_glm_wf130 - validation$loss))
+mae_glm_pls
+```
+
+##Since the MAE for lasso model is less than that of MAE calculated using lasso followed by PLS, the prediction on the test set is performed using lasso model alone.  
+```{r}
+test<- read_csv("~/Downloads/test__no_lossv3 (2).csv")
+head(test)
+```
+
+```{r}
+table(is.na(test))
+```
+
+
+```{r}
+test_set<- test[complete.cases(test), ]
+```
+
+```{r}
+table(is.na(test_set))
+```
+
+```{r}
+test_set<- test_set[ ,!names(test_set)=="f776"]
+dim(test_set)
+test_set<- test_set[ ,!names(test_set)=="f777"]
+dim(test_set)
+test_set<- test_set[ ,!names(test_set)=="...1"]
+dim(test_set)
+```
+
+```{r}
+test_norm<- predict(norm_model, test_set)
+head(test_norm)
+```
+```{r}
+test_norm<- as.data.frame(test_norm)
+```
+
+
+```{r}
+# lasso:
+# Filter test dataset to include only Lasso-selected features.
+test_set <- cbind(test_norm$f13, test_norm$f70, test_norm$f130, test_norm$f132, test_norm$f146, test_norm$f198, test_norm$f250, test_norm$f299, test_norm$f315, test_norm$f323, test_norm$f374, test_norm$f384, test_norm$f406, test_norm$f428, test_norm$f431, test_norm$f471, test_norm$f647, test_norm$f674, test_norm$f734, test_norm$f755, test_norm$f765)
+
+test_set<- as.data.frame(test_set)
+colnames(test_set)<- c("f13", "f70", "f130", "f132", "f146", "f198", "f250", "f299", "f315", "f323", "f374", "f384", "f406", "f428", "f431", "f471", "f647", "f674", "f734", "f755", "f765")
+```
+
+
+
+```{r}
+test_set<- as.matrix(test_set)
+predicted_glm_test_set<- predict(feature_glm, newx= test_set, s= 0.02888142)
+head(predicted_glm_test_set)
+```
+
+```{r}
+predicted_glm_df<- data.frame(id = test_norm$id, loss= predicted_glm_test_set)
+head(predicted_glm_df)
+```
+
+```{r}
+colnames(predicted_glm_df)<- c("id", "loss")
+```
+
+```{r}
+head(predicted_glm_df)
+```
+
+```{r}
+write.csv(predicted_glm_df, "predicted_loss_output_glm.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+
