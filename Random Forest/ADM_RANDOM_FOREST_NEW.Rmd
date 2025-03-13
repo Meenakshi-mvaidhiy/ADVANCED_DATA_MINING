@@ -1,0 +1,404 @@
+---
+title: "ADM_RANDOM FOREST_NEW"
+author: "Group 4_Random Forest"
+date: "2024-12-01"
+output: html_document
+---
+
+
+```{r}
+library(readr)
+library(class)
+library(ISLR)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(gmodels)
+library(modeest)
+library(ggcorrplot)
+library(car)
+library(DataExplorer)
+library(skimr)
+library(glmnet)
+```
+
+```{r}
+library(readr)
+train <- read_csv("C:/Users/tejas/Desktop/AJITH_ADM GROUP PROJECT/train_v3.csv")
+head(train)
+```
+
+```{r}
+dim(train)
+```
+
+```{r}
+x<-table(is.na(train))
+x
+```
+
+```{r}
+missing_training<- train[!complete.cases(train), ]
+dim(missing_training)
+```
+
+```{r}
+train<- train[complete.cases(train), ]
+dim(train)
+dim(missing_training)
+```
+ 
+```{r}
+table(is.na(train))
+```
+
+```{r}
+# Function to check if a column contains only 0 and 1
+is_binary <- function(x) {
+  all(x %in% c(0, 1))
+}
+ 
+# Find columns with only 0 and 1 values
+binary_cols <- sapply(train, is_binary)
+train_fac<- cbind(train$f33, train$f34, train$f35, train$f37, train$f38, train$f700, train$f701, train$f702, train$f736, train$f764, train$f776, train$f777)
+train_fac<- as.data.frame(train_fac)
+```
+ 
+```{r}
+colnames(train_fac)<- c("f33", "f34", "f35", "f37","f38", "f700", "f701", "f702", "f736", "f764", "f776", "f777")
+```
+ 
+```{r}
+head(train_fac)
+```
+```{r}
+train_cat<- cbind(train_fac$f776, train_fac$f777)
+```
+
+```{r}
+train<- train[ ,!names(train)=="f776"]
+dim(train)
+train<- train[ ,!names(train)=="f777"]
+dim(train)
+train<- train[ ,!names(train)=="...1"]
+dim(train)
+train<- train[ ,!names(train)=="id"]
+dim(train)
+train_num<- train[ ,!names(train)=="loss"]
+dim(train_num)
+```
+
+```{r}
+norm_model<- preProcess(train_num, method=c("center", "scale")) ##Z-score normalization
+train_norm<- predict(norm_model, train_num)
+head(train_norm)
+```
+
+```{r}
+loss<- train$loss
+training<- cbind(train_norm, train_cat, loss)
+training<- as.data.frame(training)
+dim(training)
+```
+
+
+```{r}
+training_noloss<- training[ ,!names(training)=="loss"]
+dim(training_noloss)
+```
+
+
+```{r}
+#Non-Zero variance check:
+nzv <- nearZeroVar(training_noloss)
+training_filtered <- training_noloss[, -nzv] # Exclude near-zero variance columns
+cat("Remaining features after variance filtering:", ncol(training_filtered), "\n")
+``` 
+
+#Multicolinearity check
+```{r}
+# Verify that all columns are now numeric
+training_numeric <- training_filtered[, sapply(training_filtered, is.numeric)]
+ 
+# Proceed with correlation filtering
+cor_matrix <- cor(training_numeric) # Compute correlation matrix
+head(training_numeric)
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.9) # Identify highly correlated features
+training_filtered <- training_numeric[, -highly_correlated] # Remove highly correlated features
+head(training_filtered)
+cat("Remaining features after correlation filtering:", ncol(training_filtered), "\n")
+```
+
+```{r}
+loss<- train$loss
+trained_model<- cbind(training_filtered, loss)
+trained_model<- as.data.frame(trained_model)
+training_noloss<-trained_model[ ,!names(trained_model)=="loss"]
+```
+
+
+#Importing validation dataset
+ 
+```{r}
+valid <- read.csv("C:/Users/tejas/Desktop/AJITH_ADM GROUP PROJECT/test_v3.csv")
+```
+
+```{r}
+table(is.na(valid))
+```
+ 
+```{r}
+valid<- valid[complete.cases(valid), ]
+dim(valid)
+```
+
+```{r}
+table(is.na(valid))
+```
+
+```{r}
+valid_cat<- cbind(valid$f776, valid$f777)
+```
+
+```{r}
+valid<- valid[ ,!names(valid)=="f776"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="f777"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="X"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="id"]
+dim(valid)
+valid_num<- valid[ ,!names(valid)=="loss"]
+dim(valid_num)
+```
+
+
+```{r}
+valid_norm<- predict(norm_model, valid_num)
+head(valid_norm)
+```
+
+```{r}
+loss<- valid$loss
+validation<- cbind(valid_norm, valid_cat, loss)
+validation<- as.data.frame(validation)
+dim(validation)
+```
+
+```{r}
+validation_noloss<- validation[ ,!names(validation)=="loss"]
+dim(validation_noloss)
+```
+
+```{r}
+library(randomForest)
+library(ranger)
+```
+
+```{r}
+index_rm <- trained_model$loss
+```
+```{r}
+colnames(trained_model) <- make.names(colnames(trained_model))
+
+```
+
+
+```{r}
+# Correct Random Forest model code
+set.seed(123) 
+#m1 <- randomForest(formula = loss ~.,data = trained_model,importance = TRUE)
+#summary(m1)
+```
+```{r}
+#m1$importance
+```
+
+
+```{r}
+# Get feature importance and sort in descending order
+#feature_importance <- m1$importance
+#feature_importance
+# Sort features by IncNodePurity in descending order
+#sorted_importance <- feature_importance[order(-feature_importance[, "IncNodePurity"]), ]
+
+# Print sorted importance
+#print(sorted_importance[1:21,])
+
+```
+```{r}
+#feature selection on the train-set
+features_rf<- cbind(trained_model$f212, trained_model$f746, trained_model$f638, trained_model$f436, trained_model$f3, trained_model$f401, trained_model$f433, trained_model$f740, trained_model$f734, trained_model$f208, trained_model$f384, trained_model$f432, trained_model$f743, trained_model$f774, trained_model$f132, trained_model$f640, trained_model$f598, trained_model$f739, trained_model$f70, trained_model$f431,trained_model$f1,trained_model$loss)
+
+features_rf<- as.data.frame(features_rf)
+colnames(features_rf)<- c("f212", "f746", "f638", "f436", "f3", "f401", "f433", "f740", "f734", "f208", "f384", "f432","f743","f774","f132","f640","f598","f739", "f70", "f431", "f1","loss")
+```
+
+```{r}
+#which.min(m1$mse) 
+```
+
+```{r}
+#sqrt(m1$mse[which.min(m1$mse)])
+```
+
+```{r}
+
+# Train the ranger model
+rf_ranger <- ranger(
+  formula = loss ~ .,          # Formula specifying the target variable and predictors
+  data = features_rf,                 # Training dataset
+  num.trees = 479,                   # Number of trees
+  mtry = floor(length(features_rf) / 3) # Number of features to randomly sample at each split
+)
+
+
+```
+
+```{r}
+# hyper-parameter grid search 
+hyper_grid <- expand.grid( 
+mtry 
+= seq(10, 20, by = 5), 
+node_size = seq(3, 9, by = 5), 
+sample_size = c(.632,.80), 
+OOB_RMSE   
+= 0 
+) 
+# total number of combinations 
+nrow(hyper_grid) 
+```
+
+```{r}
+for (i in 1:nrow(hyper_grid)) { 
+  # Train the model
+  model <- ranger(
+    formula = loss ~ .,                  # Specify the formula
+    data = features_rf,                         # Training dataset
+    num.trees = 479,                           # Number of trees
+    mtry = hyper_grid$mtry[i],                 # Current value of mtry
+    min.node.size = hyper_grid$node_size[i],   # Current value of min.node.size
+    sample.fraction = hyper_grid$sample_size[i], # Current value of sample.fraction
+    seed = 123                                 # Set seed for reproducibility
+  )
+  
+  # Add OOB RMSE to the grid
+  hyper_grid$OOB_RMSE[i] <- sqrt(model$prediction.error)
+}
+
+```
+
+```{r}
+hyper_grid %>% 
+dplyr::arrange(OOB_RMSE) %>% 
+head(10)
+```
+
+```{r}
+#feature selection on the valid-set
+features_rf_valid<- cbind(validation$f212, validation$f746, validation$f638, validation$f436, validation$f3, validation$f401, validation$f433, validation$f740, validation$f734, validation$f208, validation$f384, validation$f432, validation$f743, validation$f774, validation$f132, validation$f640, validation$f598, validation$f739, validation$f70, validation$f431,validation$f1,validation$loss)
+
+features_rf_valid<- as.data.frame(features_rf_valid)
+colnames(features_rf_valid)<- c("f212", "f746", "f638", "f436", "f3", "f401", "f433", "f740", "f734", "f208", "f384", "f432","f743","f774","f132","f640","f598","f739", "f70", "f431", "f1","loss")
+
+```
+
+
+
+```{r}
+# ranger 
+pred_ranger <- predict(rf_ranger, features_rf_valid) 
+head(pred_ranger$predictions) 
+```
+```{r}
+pred_rf <- as.data.frame(pred_ranger)
+
+```
+
+
+```{r}
+mae_rf <- mean(abs(pred_rf$prediction-features_rf_valid$loss))
+mae_rf
+```
+```{r}
+# test set workings:
+test<- read.csv("C:/Users/tejas/Desktop/AJITH_ADM GROUP PROJECT/test__no_lossv3.csv")
+head(test)
+dim(test)
+```
+
+```{r}
+table(is.na(test))
+```
+
+```{r}
+test <- test[complete.cases(test),]
+dim(test)
+```
+
+```{r}
+table(is.na(test))
+```
+
+```{r}
+test_cat <- cbind(test$f776,test$f777)
+```
+
+```{r}
+test_num <- test[, !names(test) %in% c("X", "f776", "f777")]
+head(test_num)
+```
+
+
+```{r}
+# Apply the normalization model from training
+test_norm <- predict(norm_model, test_num)
+head(test_norm)
+# Combine normalized numerical data with categorical data (if needed)
+test <- cbind(test_norm, test_cat)
+head(test)
+```
+
+```{r}
+# Subset the test dataset using selected features from Random Forest
+test_features <- test[, c("f212", "f746", "f638", "f436", 
+                          "f3", "f401", "f433", "f740", 
+                          "f734", "f208", "f384", "f432", 
+                          "f743", "f774", "f132", "f640", 
+                          "f598", "f739", "f70", "f431", "f1")]
+
+# Ensure test_features is a data frame
+test_features <- as.data.frame(test_features)
+
+# Predict loss using the trained Random Forest model
+predictions <- predict(rf_ranger, data = test_features)
+
+# Extract predicted loss
+predicted_loss <- predictions$predictions
+```
+
+```{r}
+print(dim(test))
+print(dim(test_features))
+print(head(test$id))  # Check if `id` column exists and is populated
+```
+
+
+
+```{r}
+# Combine predictions with IDs from the test dataset
+results <- data.frame(ID = test$id, Predicted_Loss = predicted_loss)
+results
+# Save the predictions to a CSV file
+write.csv(results, "predicted_loss_output_random_forest", row.names = FALSE)
+
+# View the first few rows of results
+head(results)
+
+```
+
+
+
+
