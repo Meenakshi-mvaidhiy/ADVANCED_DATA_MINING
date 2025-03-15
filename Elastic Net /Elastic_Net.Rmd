@@ -1,0 +1,386 @@
+---
+title: "Elastic_net"
+author: "Ajith Periyasamy"
+date: "2024-11-30"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+library(readr)
+library(class)
+library(ISLR)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(gmodels)
+library(modeest)
+library(ggcorrplot)
+library(car)
+library(DataExplorer)
+library(skimr)
+library(glmnet)
+```
+ 
+```{r}
+library(readr)
+train <- read_csv("~/Desktop/AJITH/train_v3.csv")
+head(train)
+```
+ 
+```{r}
+dim(train)
+```
+ 
+```{r}
+x<-table(is.na(train))
+x
+```
+ 
+```{r}
+missing_training<- train[!complete.cases(train), ]
+dim(missing_training)
+```
+ 
+```{r}
+train<- train[complete.cases(train), ]
+dim(train)
+dim(missing_training)
+```
+```{r}
+table(is.na(train))
+```
+ 
+```{r}
+# Function to check if a column contains only 0 and 1
+is_binary <- function(x) {
+  all(x %in% c(0, 1))
+}
+# Find columns with only 0 and 1 values
+binary_cols <- sapply(train, is_binary)
+train_fac<- cbind(train$f33, train$f34, train$f35, train$f37, train$f38, train$f700, train$f701, train$f702, train$f736, train$f764, train$f776, train$f777)
+train_fac<- as.data.frame(train_fac)
+```
+```{r}
+colnames(train_fac)<- c("f33", "f34", "f35", "f37","f38", "f700", "f701", "f702", "f736", "f764", "f776", "f777")
+```
+```{r}
+head(train_fac)
+```
+```{r}
+train_cat<- cbind(train_fac$f776, train_fac$f777)
+```
+ 
+```{r}
+train<- train[ ,!names(train)=="f776"]
+dim(train)
+train<- train[ ,!names(train)=="f777"]
+dim(train)
+train<- train[ ,!names(train)=="...1"]
+dim(train)
+train<- train[ ,!names(train)=="id"]
+dim(train)
+train_num<- train[ ,!names(train)=="loss"]
+dim(train_num)
+```
+ 
+```{r}
+norm_model<- preProcess(train_num, method=c("center", "scale")) ##Z-score normalization
+train_norm<- predict(norm_model, train_num)
+head(train_norm)
+```
+ 
+```{r}
+loss<- train$loss
+training<- cbind(train_norm, train_cat, loss)
+training<- as.data.frame(training)
+dim(training)
+```
+ 
+ 
+```{r}
+training_noloss<- training[ ,!names(training)=="loss"]
+dim(training_noloss)
+```
+ 
+ 
+```{r}
+#Non-Zero variance check:
+nzv <- nearZeroVar(training_noloss)
+training_filtered <- training_noloss[, -nzv] # Exclude near-zero variance columns
+cat("Remaining features after variance filtering:", ncol(training_filtered), "\n")
+```
+ 
+#Multicolinearity check
+```{r}
+# Verify that all columns are now numeric
+training_numeric <- training_filtered[, sapply(training_filtered, is.numeric)]
+# Proceed with correlation filtering
+cor_matrix <- cor(training_numeric) # Compute correlation matrix
+head(training_numeric)
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.9) # Identify highly correlated features
+training_filtered <- training_numeric[, -highly_correlated] # Remove highly correlated features
+head(training_filtered)
+cat("Remaining features after correlation filtering:", ncol(training_filtered), "\n")
+```
+ 
+```{r}
+loss<- train$loss
+trained_model<- cbind(training_filtered, loss)
+trained_model<- as.data.frame(trained_model)
+training_noloss<-trained_model[ ,!names(trained_model)=="loss"]
+```
+ 
+ 
+#Importing validation dataset
+```{r}
+valid <- read.csv("~/Desktop/AJITH/test_v3.csv")
+```
+ 
+```{r}
+table(is.na(valid))
+```
+```{r}
+valid<- valid[complete.cases(valid), ]
+dim(valid)
+```
+ 
+```{r}
+table(is.na(valid))
+```
+ 
+```{r}
+valid_cat<- cbind(valid$f776, valid$f777)
+```
+ 
+```{r}
+valid<- valid[ ,!names(valid)=="f776"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="f777"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="X"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="id"]
+dim(valid)
+valid_num<- valid[ ,!names(valid)=="loss"]
+dim(valid_num)
+```
+ 
+ 
+```{r}
+valid_norm<- predict(norm_model, valid_num)
+head(valid_norm)
+```
+ 
+```{r}
+loss<- valid$loss
+validation<- cbind(valid_norm, valid_cat, loss)
+validation<- as.data.frame(validation)
+dim(validation)
+```
+ 
+```{r}
+validation_noloss<- validation[ ,!names(validation)=="loss"]
+dim(validation_noloss)
+```
+ 
+ 
+```{r}
+# Performing Lasso for feature selection on features selected using filtering methods above:
+# Converting to matrix as glmnet requires inputs in matrix form
+set.seed(123)
+input_lasso <- as.matrix(training_noloss) # Predictor variables
+index <- trained_model$loss # Target variable
+```
+```{r}
+# Lasso:
+# Fit a Lasso regression model
+feature_lasso <- glmnet(input_lasso, index, alpha = 1, family = "gaussian") # alpha is set to 1 since we are performing lasso for feature selection; gamily is set to gaussian since the target variable is numeric and continuous.
+feature_lasso$lambda
+```
+```{r}
+# CV to find optimal lambda:
+set.seed(123)
+cv_feature_lasso <- cv.glmnet(input_lasso, index, alpha = 1, family = "gaussian")
+optimal_lambda_svm_featuresellaso <- cv_feature_lasso$lambda.min # Optimal lambda value
+cat("Optimal Lambda (Regularization Parameter):", optimal_lambda_svm_featuresellaso, "\n")
+```
+```{r}
+# Feature selection based on optimal lambda value:
+coefficients_feature_lasso <- coef(cv_feature_lasso, s = "lambda.min")
+# Convert sparse matrix to a regular matrix
+coefficients_matrix <- as.matrix(coefficients_feature_lasso)
+head(coefficients_matrix)
+# Extract names of non-zero coefficients (excluding the intercept)
+selected_features_svm <- rownames(coefficients_matrix)[coefficients_matrix[, 1] != 0]
+selected_features_svm <- selected_features_svm[selected_features_svm != "(Intercept)"] # Remove intercept
+```
+```{r}
+# Print selected features
+cat("Selected Features using lasso:", length(selected_features_svm), "\n")
+print(selected_features_svm)
+```
+ 
+```{r}
+# lasso:
+# Filter training dataset to include only Lasso-selected features and the target variable
+elasticnet_training <- training[, c(selected_features_svm, "loss")]
+head(elasticnet_training)
+elasticnet_training_noloss<- elasticnet_training[ ,!names(elasticnet_training)=="loss"]
+head(elasticnet_training_noloss)
+```
+ 
+```{r}
+# lasso validation:
+# Filter validation dataset to include only Lasso-selected features and the target variable
+elasticnet_validation <- validation[, c(selected_features_svm, "loss")]
+elasticnet_validation_noloss <- elasticnet_validation[,!names(elasticnet_validation)=="loss"]
+head(elasticnet_validation)
+```
+ 
+```{r}
+index<- trained_model$loss
+```
+ 
+```{r}
+feature_selected_lasso<- as.matrix(elasticnet_training)
+feature_selected_lasso_valid<- as.matrix(elasticnet_validation)
+elasticnet_training_noloss<- as.matrix(elasticnet_training_noloss)
+```
+ 
+```{r}
+# Cross-validation for Elastic Net
+set.seed(123)
+cv_elastic_net <- cv.glmnet(x = elasticnet_training_noloss, y = index, alpha = 0.5, family = "gaussian")
+# Get optimal lambda
+optimal_lambda <- cv_elastic_net$lambda.min
+cat("Optimal Lambda:", optimal_lambda, "\n")
+ 
+# Train final model
+elastic_net_model <- glmnet(x = elasticnet_training_noloss,y = index,alpha = 0.5,lambda = optimal_lambda, family = "gaussian")
+```
+```{r}
+# Training Error (MAE)
+training_predictions <- predict(elastic_net_model, newx = elasticnet_training_noloss)
+training_mae <- mean(abs(index - training_predictions))
+cat("Training MAE:", training_mae, "\n")
+```
+ 
+```{r}
+# Validation Error (MAE)
+elasticnet_validation_noloss <- as.matrix(elasticnet_validation_noloss)
+validation_predictions <- predict(elastic_net_model, newx = elasticnet_validation_noloss)
+validation_mae <- mean(abs(valid$loss - validation_predictions))
+cat("Validation MAE:", validation_mae, "\n")
+```
+#### the difference between train and validation MAE is very minimum. Hence there is neither overfitting nor underfitting.
+ 
+```{r}
+# Grid Search for Alpha
+alpha_values <- seq(0.1, 1, by = 0.1)
+best_alpha <- 0.5  # Current value
+for (alpha in alpha_values) {
+  cv_model <- cv.glmnet(elasticnet_training_noloss, index, alpha = alpha, family = "gaussian")
+  if (cv_model$cvm[cv_model$lambda == cv_model$lambda.min] < validation_mae) {
+    best_alpha <- alpha
+    validation_mae <- cv_model$cvm[cv_model$lambda == cv_model$lambda.min]
+  }
+}
+cat("Best Alpha:", best_alpha, "with Validation MAE:", validation_mae, "\n")
+ 
+```
+#### Best alpha value for Elastic Net would be 0.5 and the corresponding MAE would be 1.494133.
+ 
+ 
+```{r}
+# plots
+plot(cv.glmnet(elasticnet_training_noloss,index,alpha=0.5))
+```
+
+```{r}
+# test set workings:
+ 
+test<- read.csv("~/Desktop/AJITH/test__no_lossv3.csv")
+head(test)
+dim(test)
+```
+ 
+```{r}
+table(is.na(test))
+```
+ 
+```{r}
+test <- test[complete.cases(test),]
+dim(test)
+```
+ 
+```{r}
+table(is.na(test))
+```
+ 
+```{r}
+test_cat <- cbind(test$f776,test$f777)
+```
+ 
+```{r}
+test_num <- test[, !names(test) %in% c("X","f776", "f777")]
+head(test_num)
+```
+ 
+ 
+```{r}
+# Apply the normalization model from training
+test_norm <- predict(norm_model, test_num)
+head(test_norm)
+# Combine normalized numerical data with categorical data (if needed)
+test <- cbind(test_norm, test_cat)
+head(test)
+```
+ 
+ 
+```{r}
+elastic_net_test <- test[, c(selected_features_svm)]
+head(elastic_net_test)
+```
+ 
+
+
+```{r}
+elastic_net_test <- as.matrix(elastic_net_test)
+```
+
+ 
+```{r}
+predicted_loss_normalized_elastic_net <- predict(elastic_net_model, newx = elastic_net_test)
+head(predicted_loss_normalized_elastic_net)
+```
+
+
+```{r}
+# Convert predictions to numeric and ensure proper column naming
+predicted_loss_df_elastic_net <- data.frame(
+  id = test$id,
+  loss = as.numeric(as.vector(predicted_loss_normalized_elastic_net))
+)
+
+# Verify the column names
+colnames(predicted_loss_df_elastic_net) <- c("id", "loss")
+
+# Check the structure and preview
+head(predicted_loss_df_elastic_net)
+summary(predicted_loss_df_elastic_net)
+
+# Write to CSV with correct header
+write.csv(predicted_loss_df_elastic_net, "predicted_loss_output_elastic_net.csv", row.names = FALSE)
+
+```
+
+
+
+
+
+
+
+
