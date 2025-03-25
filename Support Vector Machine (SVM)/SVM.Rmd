@@ -1,0 +1,452 @@
+---
+title: "ADM_SVM_FINAL"
+author: "GROUP 4 SVM"
+date: "2024-12-01"
+output: html_document
+---
+
+```{r}
+library(readr)
+library(class)
+library(ISLR)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(gmodels)
+library(modeest)
+library(ggcorrplot)
+library(car)
+library(DataExplorer)
+library(skimr)
+library(glmnet)
+```
+
+```{r}
+train <- read_csv("~/Downloads/train_v3.csv")
+head(train)
+```
+
+```{r}
+dim(train)
+```
+
+```{r}
+x<-table(is.na(train))
+x
+```
+
+```{r}
+missing_training<- train[!complete.cases(train), ]
+dim(missing_training)
+```
+
+```{r}
+train<- train[complete.cases(train), ]
+dim(train)
+dim(missing_training)
+```
+ 
+```{r}
+table(is.na(train))
+```
+
+```{r}
+# Function to check if a column contains only 0 and 1
+is_binary <- function(x) {
+  all(x %in% c(0, 1))
+}
+ 
+# Find columns with only 0 and 1 values
+binary_cols <- sapply(train, is_binary)
+train_fac<- cbind(train$f33, train$f34, train$f35, train$f37, train$f38, train$f700, train$f701, train$f702, train$f736, train$f764, train$f776, train$f777)
+train_fac<- as.data.frame(train_fac)
+```
+ 
+```{r}
+colnames(train_fac)<- c("f33", "f34", "f35", "f37","f38", "f700", "f701", "f702", "f736", "f764", "f776", "f777")
+```
+ 
+```{r}
+head(train_fac)
+```
+```{r}
+train_cat<- cbind(train_fac$f776, train_fac$f777)
+```
+
+```{r}
+train<- train[ ,!names(train)=="f776"]
+dim(train)
+train<- train[ ,!names(train)=="f777"]
+dim(train)
+train<- train[ ,!names(train)=="...1"]
+dim(train)
+train<- train[ ,!names(train)=="id"]
+dim(train)
+train_num<- train[ ,!names(train)=="loss"]
+dim(train_num)
+```
+
+```{r}
+norm_model<- preProcess(train_num, method=c("center", "scale")) ##Z-score normalization
+train_norm<- predict(norm_model, train_num)
+head(train_norm)
+```
+
+```{r}
+loss<- train$loss
+training<- cbind(train_norm, train_cat, loss)
+training<- as.data.frame(training)
+dim(training)
+```
+
+
+```{r}
+training_noloss<- training[ ,!names(training)=="loss"]
+dim(training_noloss)
+```
+
+
+```{r}
+#Non-Zero variance check:
+nzv <- nearZeroVar(training_noloss)
+training_filtered <- training_noloss[, -nzv] # Exclude near-zero variance columns
+cat("Remaining features after variance filtering:", ncol(training_filtered), "\n")
+``` 
+
+#Multicolinearity check
+```{r}
+# Verify that all columns are now numeric
+training_numeric <- training_filtered[, sapply(training_filtered, is.numeric)]
+ 
+# Proceed with correlation filtering
+cor_matrix <- cor(training_numeric) # Compute correlation matrix
+head(training_numeric)
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.9) # Identify highly correlated features
+training_filtered <- training_numeric[, -highly_correlated] # Remove highly correlated features
+head(training_filtered)
+cat("Remaining features after correlation filtering:", ncol(training_filtered), "\n")
+```
+
+```{r}
+loss<- train$loss
+trained_model<- cbind(training_filtered, loss)
+trained_model<- as.data.frame(trained_model)
+training_noloss<-trained_model[ ,!names(trained_model)=="loss"]
+```
+
+
+#Importing validation dataset
+ 
+```{r}
+valid <- read.csv("~/Downloads/test_v3.csv")
+```
+
+```{r}
+table(is.na(valid))
+```
+ 
+```{r}
+valid<- valid[complete.cases(valid), ]
+dim(valid)
+```
+
+```{r}
+table(is.na(valid))
+```
+
+```{r}
+valid_cat<- cbind(valid$f776, valid$f777)
+```
+
+```{r}
+valid<- valid[ ,!names(valid)=="f776"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="f777"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="X"]
+dim(valid)
+valid<- valid[ ,!names(valid)=="id"]
+dim(valid)
+valid_num<- valid[ ,!names(valid)=="loss"]
+dim(valid_num)
+```
+
+
+```{r}
+valid_norm<- predict(norm_model, valid_num)
+head(valid_norm)
+```
+
+```{r}
+loss<- valid$loss
+validation<- cbind(valid_norm, valid_cat, loss)
+validation<- as.data.frame(validation)
+dim(validation)
+```
+
+```{r}
+validation_noloss<- validation[ ,!names(validation)=="loss"]
+dim(validation_noloss)
+```
+
+
+```{r}
+# Performing Lasso for feature selection on features selected using filtering methods above:
+# Converting to matrix as glmnet requires inputs in matrix form
+set.seed(123)
+input_lasso <- as.matrix(training_noloss) # Predictor variables
+index <- trained_model$loss # Target variable
+```
+ 
+```{r}
+# Lasso:
+# Fit a Lasso regression model
+set.seed(123)
+feature_lasso <- glmnet(input_lasso, index, alpha = 1, family = "gaussian") # alpha is set to 1 since we are performing lasso for feature selection; gamily is set to gaussian since the target variable is numeric and continuous.
+```
+ 
+```{r}
+# CV to find optimal lambda:
+set.seed(123)
+cv_feature_lasso <- cv.glmnet(input_lasso, index, alpha = 1, family = "gaussian")
+optimal_lambda_svm_featuresellaso <- cv_feature_lasso$lambda.min # Optimal lambda value
+cat("Optimal Lambda (Regularization Parameter):", optimal_lambda_svm_featuresellaso, "\n")
+```
+ 
+```{r}
+# Feature selection based on optimal lambda value:
+coefficients_feature_lasso <- coef(cv_feature_lasso, s = "lambda.min")
+coefficients_feature_lasso
+# Convert sparse matrix to a regular matrix
+coefficients_matrix <- as.matrix(coefficients_feature_lasso)
+head(coefficients_matrix)
+# Extract names of non-zero coefficients (excluding the intercept)
+selected_features_svm <- rownames(coefficients_matrix)[coefficients_matrix[, 1] != 0]
+selected_features_svm <- selected_features_svm[selected_features_svm != "(Intercept)"] # Remove intercept
+```
+ 
+```{r}
+# Print selected features
+cat("Selected Features using lasso:", length(selected_features_svm), "\n")
+print(selected_features_svm)
+```
+
+```{r}
+# lasso:
+# Filter training dataset to include only Lasso-selected features and the target variable
+svm_training <- training[, c(selected_features_svm, "loss")]
+head(svm_training)
+svm_training_noloss<- svm_training[ ,!names(svm_training)=="loss"]
+head(svm_training_noloss)
+```
+
+```{r}
+# lasso validation:
+# Filter validation dataset to include only Lasso-selected features and the target variable
+svm_validation <- validation[, c(selected_features_svm, "loss")]
+head(svm_validation)
+```
+
+```{r}
+library(caret)
+
+# Define the 3-fold cross-validation setup
+trctrl <- trainControl(method = "cv", number = 3, summaryFunction = defaultSummary)  # 3-fold CV
+
+# Train the SVM model using the linear kernel (without grid search)
+set.seed(2018)
+svm_model <- train(loss ~ ., data = svm_training, method = "svmLinear",trControl = trctrl)
+
+# Print the model summary to review details
+print(svm_model)
+```
+
+```{r}
+# Results: Select the best C value based on MAE
+best_c <- svm_model$bestTune$C
+cat("Best C value (based on MAE):", best_c, "\n")
+```
+
+```{r}
+# Step 2.1: Predictions on Training Set , when c=1 [default value]
+training_predictions <- predict(svm_model, newdata = svm_training)
+training_actuals <- svm_training$loss
+training_mae <- mean(abs(training_actuals - training_predictions))
+cat("Training MAE:", training_mae, "\n")
+```
+
+```{r}
+# Step 2.2: Predictions on Validation Set when c=1 [default value]
+validation_predictions <- predict(svm_model, newdata = svm_validation)
+validation_actuals <- svm_validation$loss
+validation_mae <- mean(abs(validation_actuals - validation_predictions))
+cat("Validation MAE:", validation_mae, "\n")
+```
+
+
+```{r}
+# SVM GRID SEARCH:
+
+# Define a smaller grid with custom C values for the grid search
+grid <- expand.grid(C = c(0.5, 1, 2, 5))
+
+# Train the SVM model using the linear kernel and custom grid for hyperparameter tuning
+set.seed(2018)
+svm_model_with_grid <- train(
+  loss ~ ., 
+  data = svm_training, 
+  method = "svmLinear",
+  trControl = trctrl,  # 3-fold CV
+  tuneGrid = grid  # Custom grid for C values
+)
+
+# Print the model summary to review details
+print(svm_model_with_grid)
+```
+```{r}
+# Results of SVM Grid Search:
+# Find the best C based on MAE
+best_c_with_grid <- svm_model_with_grid$results$C[which.min(svm_model_with_grid$results$MAE)]
+best_c_with_grid
+cat("Best C value based on MAE (from grid search):", best_c_with_grid, "\n")
+
+# Update the best C in the model
+svm_model_with_grid$bestTune <- data.frame(C = best_c_with_grid)
+
+# Display justification message
+cat("MAE was used to select the optimal model using the smallest value.\n",
+    "The final value used for the model was C =", best_c_with_grid, ".\n")
+
+```
+
+```{r}
+# Step 2.1: Predictions on Training Set
+training_predictions_with_grid <- predict(svm_model_with_grid, newdata = svm_training)
+training_actuals_with_grid <- svm_training$loss
+training_mae_with_grid <- mean(abs(training_actuals_with_grid - training_predictions_with_grid))
+cat("Training MAE (with grid search):", training_mae_with_grid, "\n")
+```
+
+```{r}
+# Step 2.2: Predictions on Validation Set
+validation_predictions_with_grid <- predict(svm_model_with_grid, newdata = svm_validation)
+validation_actuals_with_grid <- svm_validation$loss
+validation_mae_with_grid <- mean(abs(validation_actuals_with_grid - validation_predictions_with_grid))
+cat("Validation MAE (with grid search):", validation_mae_with_grid, "\n")
+```
+
+```{r}
+# test set workings:
+test<- read.csv("~/Downloads/test__no_lossv3.csv")
+head(test)
+dim(test)
+```
+
+```{r}
+table(is.na(test))
+```
+
+```{r}
+test <- test[complete.cases(test),]
+dim(test)
+```
+
+```{r}
+table(is.na(test))
+```
+
+```{r}
+test_cat <- cbind(test$f776,test$f777)
+```
+
+```{r}
+test_num <- test[, !names(test) %in% c("...1", "f776", "f777")]
+head(test_num)
+```
+
+
+```{r}
+# Apply the normalization model from training
+test_norm <- predict(norm_model, test_num)
+head(test_norm)
+# Combine normalized numerical data with categorical data (if needed)
+test <- cbind(test_norm, test_cat)
+head(test)
+```
+
+
+```{r}
+svm_test <- test[, c(selected_features_svm)]
+head(svm_test)
+```
+
+```{r}
+predicted_loss_normalized <- predict(svm_model, newdata = svm_test)
+head(predicted_loss_normalized)
+```
+
+```{r}
+# Combine the retained 'id' column with the predicted loss values
+predicted_loss_df <- data.frame(id = test$id, loss = predicted_loss_normalized)
+```
+
+```{r}
+predicted_loss_df <- as.data.frame(predicted_loss_df)
+head(predicted_loss_df)
+```
+
+
+
+```{r}
+# Histogram to plot Normalized predicted loss:
+
+hist(predicted_loss_df$loss, breaks = 100, 
+     col = "gray", 
+     main = "Histogram of Predicted Loss with More Bins", 
+     xlab = "Predicted Loss", 
+     border = "black")
+
+```
+
+
+```{r}
+# Now apply the reverse normalization
+mean_value <- 0.792575
+sd_value <- 4.335679
+
+# Ensure we're working with the correct column
+predicted_loss_df$loss_actual <- (predicted_loss_df$loss * sd_value) + mean_value
+
+# Check the transformed values
+print(head(predicted_loss_df$loss_actual))  # Check after applying reverse normalization
+```
+
+
+```{r}
+predicted_loss_final <- data.frame(id = test$id, loss = predicted_loss_df$loss_actual)
+head(predicted_loss_final)
+```
+
+
+
+
+
+```{r}
+# Histogram on original Loss Values[Resverse Normalized]
+hist(predicted_loss_final$loss, breaks = 100, 
+     col = "gray", 
+     main = "Histogram of Predicted Loss", 
+     xlab = "Predicted Loss", 
+     border = "black")
+
+```
+
+```{r}
+# Save the predictions to a CSV file with the required format
+write.csv(predicted_loss_final, "predicted_loss_output_svm.csv", row.names = FALSE)
+
+```
+
+
+
